@@ -24,6 +24,8 @@ init -999 python:
             self.last_who = u""
             self.last_what = u""
             self.current_choices = []
+            self.current_say_id = 0
+            self.spoken_say_id = -1
             self.init_speech()
 
         def init_speech(self):
@@ -134,6 +136,9 @@ init -999 python:
                     self.sapi = None
                     self.active_driver = None
 
+        def on_say_advance(self):
+            self.current_say_id += 1
+
         def on_dialogue(self, who, what):
             if renpy.predicting():
                 return
@@ -143,13 +148,18 @@ init -999 python:
             clean_who = self.clean_text(who) if who else u""
             clean_what = self.clean_text(what) if what else u""
 
+            if self.spoken_say_id == self.current_say_id and clean_who == self.last_who and clean_what == self.last_what:
+                return
+
+            self.spoken_say_id = self.current_say_id
+            self.last_who = clean_who
+            self.last_what = clean_what
+
             if clean_who:
                 msg = u"%s: %s" % (clean_who, clean_what)
             else:
                 msg = clean_what
 
-            self.last_who = clean_who
-            self.last_what = clean_what
             self.last_spoken_text = u""
             self.speak(msg, interrupt=True)
 
@@ -228,11 +238,28 @@ init 100 python:
     renpy.exports.say = _accessible_say_hook
     renpy.say = _accessible_say_hook
 
+    try:
+        _base_show_display_say = renpy.character.show_display_say
+        def _accessible_show_display_say(who, what, *args, **kwargs):
+            sr.on_dialogue(who, what)
+            return _base_show_display_say(who, what, *args, **kwargs)
+        renpy.character.show_display_say = _accessible_show_display_say
+    except Exception:
+        pass
+
+    def _accessible_char_callback(event, interact=True, **kwargs):
+        if event == "begin":
+            sr.on_say_advance()
+
+    config.all_character_callbacks.append(_accessible_char_callback)
+
 # -------------------------------------------------------------
 # 1. DIALOGUE SCREEN (say)
 # -------------------------------------------------------------
 screen say(who, what):
     style_prefix "say"
+
+    $ sr.on_dialogue(who, what)
 
     window:
         id "window"
@@ -341,7 +368,7 @@ screen quick_menu():
         imagebutton:
             idle "gui/pausebutton.png"
             hover "gui/pausebutton.png"
-            action ShowMenu()
+            action ShowMenu("pause")
             hovered Function(sr.speak, u"Pause", True)
             xalign 0.92
             yalign .89
@@ -355,7 +382,82 @@ screen quick_menu():
             yalign 0.98
 
 # -------------------------------------------------------------
-# 5. PAUSE SAVE & LOAD FILE SLOTS
+# 5. ACCESSIBLE PAUSE MENU HUB
+# -------------------------------------------------------------
+screen game_pause_menu():
+    tag menu
+    add "gui/nvl.png"
+
+    on "show" action Function(sr.speak, u"Pause Menu. 1: Resume. 2: Save Game. 3: Load Game. 4: Options. 5: Main Menu. 6: Quit Game.", False)
+
+    frame:
+        xalign 0.5
+        yalign 0.5
+        background "#000000cc"
+        padding (50, 35)
+
+        vbox:
+            spacing 15
+            xalign 0.5
+
+            label _("PAUSE MENU"):
+                xalign 0.5
+
+            textbutton _("1. Resume"):
+                action Return()
+                hovered Function(sr.speak, u"1: Resume Game", True)
+                xalign 0.5
+
+            textbutton _("2. Save Game"):
+                action ShowMenu("save")
+                hovered Function(sr.speak, u"2: Save Game", True)
+                xalign 0.5
+
+            textbutton _("3. Load Game"):
+                action ShowMenu("load")
+                hovered Function(sr.speak, u"3: Load Game", True)
+                xalign 0.5
+
+            textbutton _("4. Options"):
+                action ShowMenu("preferences")
+                hovered Function(sr.speak, u"4: Options and Settings", True)
+                xalign 0.5
+
+            textbutton _("5. Main Menu"):
+                action MainMenu()
+                hovered Function(sr.speak, u"5: Return to Main Menu", True)
+                xalign 0.5
+
+            textbutton _("6. Quit Game"):
+                action Quit(confirm=True)
+                hovered Function(sr.speak, u"6: Quit Game", True)
+                xalign 0.5
+
+    key "game_menu" action Return()
+    key "1" action Return()
+    key "2" action ShowMenu("save")
+    key "3" action ShowMenu("load")
+    key "4" action ShowMenu("preferences")
+    key "5" action MainMenu()
+    key "6" action Quit(confirm=True)
+
+screen pause():
+    tag menu
+    use game_pause_menu
+
+screen pause_menu():
+    tag menu
+    use game_pause_menu
+
+screen game_menu(title="", scroll=None):
+    tag menu
+    use game_pause_menu
+
+init python:
+    _game_menu_screen = "pause"
+
+# -------------------------------------------------------------
+# 6. PAUSE SAVE & LOAD FILE SLOTS
 # -------------------------------------------------------------
 init python:
     def get_slot_description(slot, title):
@@ -367,8 +469,18 @@ init python:
         else:
             return u"Slot %d: Empty." % (slot)
 
+screen save():
+    tag menu
+    use pause_file_slots(_("Save"))
+
+screen load():
+    tag menu
+    use pause_file_slots(_("Load"))
+
 screen pause_file_slots(title):
     default page_name_value = FilePageNameInputValue(pattern=_("Page {}"), auto=_("Auto saves"), quick=_("Quick saves"))
+
+    on "show" action Function(sr.speak, u"%s Menu. Select a slot, or press Escape to return." % title, False)
 
     add "gui/nvl.png"
 
@@ -449,12 +561,16 @@ screen pause_file_slots(title):
             action Return()
             hovered Function(sr.speak, u"Return", True)
 
+    key "game_menu" action Return()
+
 # -------------------------------------------------------------
-# 6. COMPLETE SETTINGS / PREFERENCES (Fully Accessible to NVDA)
+# 7. COMPLETE SETTINGS / PREFERENCES (Fully Accessible to NVDA)
 # -------------------------------------------------------------
 screen preferences():
     tag menu
     add "gui/nvl.png"
+
+    on "show" action Function(sr.speak, u"Options Menu. Display Mode and Volume Controls. Press Escape to return.", False)
 
     frame:
         xalign 0.5
@@ -535,7 +651,7 @@ screen pause_prefs():
     use preferences
 
 # -------------------------------------------------------------
-# 7. ABOUT & CREDITS SCREENS (100% Accessible)
+# 8. ABOUT & CREDITS SCREENS (100% Accessible)
 # -------------------------------------------------------------
 screen aboutmenu():
     tag menu
@@ -616,7 +732,7 @@ screen artists():
     on "show" action Function(sr.speak, artists_text, False)
 
 # -------------------------------------------------------------
-# 8. CONFIRMATION SCREEN
+# 9. CONFIRMATION SCREEN
 # -------------------------------------------------------------
 screen confirm(message, yes_action, no_action):
     modal True
@@ -651,7 +767,7 @@ screen confirm(message, yes_action, no_action):
     key "game_menu" action no_action
 
 # -------------------------------------------------------------
-# 9. GLOBAL ACCESSIBILITY HOTKEYS
+# 10. GLOBAL ACCESSIBILITY HOTKEYS
 # -------------------------------------------------------------
 init python:
     config.keymap['sr_repeat_dialogue'] = ['h', 'H']
