@@ -1,0 +1,16 @@
+# Ren'Py compiled files
+*.rpyc
+*.rpyb
+*.rpymc
+*.pyc
+__pycache__/
+
+# Saves and persistent data
+saves/
+game/saves/
+game/persistent
+
+# Temporary files
+*.tmp
+*.bak
+*.log
