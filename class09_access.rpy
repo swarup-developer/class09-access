@@ -174,9 +174,11 @@ init -999 python:
 
     sr = ScreenReaderManager()
 
+    # Completely disable Ren'Py's built-in wscript/SAPI voice so only NVDA speaks
     try:
-        import renpy.speech
-        renpy.speech.speak = lambda *a, **kw: None
+        import renpy.display.tts as rtts
+        rtts.default_tts_function = lambda s: None
+        config.tts_function = lambda s: None
     except Exception:
         pass
 
@@ -411,50 +413,63 @@ screen pause_file_slots(title):
             action Return()
             hovered Function(sr.speak, u"Return", True)
 
+
 # -------------------------------------------------------------
-# 6. SETTINGS / PREFERENCES (COMPLETELY SILENT AS REQUESTED)
+# 6. SETTINGS / PREFERENCES (Main Menu & In-Game: NVDA Only)
 # -------------------------------------------------------------
-screen pause_prefs():
+screen preferences():
     tag menu
     add "gui/nvl.png"
-    style_prefix "alt_menu"
 
-    vbox:
+    frame:
         xalign 0.5
         yalign 0.5
-
-        hbox:
-            box_wrap True
-            if renpy.variant("pc") or renpy.variant("web"):
-                vbox:
-                    style_prefix "radio"
-                    label _("Display")
-                    textbutton _("Window"):
-                        action [Function(sr.speak, u"Window", True), Preference("display", "window")]
-                        hovered Function(sr.speak, u"Window", True)
-                    textbutton _("Fullscreen"):
-                        action [Function(sr.speak, u"Fullscreen", True), Preference("display", "fullscreen")]
-                        hovered Function(sr.speak, u"Fullscreen", True)
-
-        null height (4 * gui.pref_spacing)
+        background "#000000cc"
+        padding (50, 40)
 
         vbox:
-            style_prefix "slider"
-            box_wrap True
+            spacing 15
+            xalign 0.5
 
-            vbox:
-                if config.has_sound:
-                    label _("Scene Volume")
-                    vbox:
-                        bar value Preference("music volume") hovered Function(sr.speak, u"Scene Volume", True)
+            label _("Display"):
+                xalign 0.5
 
-                    label _("UI Volume")
-                    vbox:
-                        bar value Preference("sound volume") hovered Function(sr.speak, u"UI Volume", True)
+            hbox:
+                spacing 40
+                xalign 0.5
+                textbutton _("Window"):
+                    action [Function(sr.speak, u"Window", True), Preference("display", "window")]
+                    hovered Function(sr.speak, u"Window", True)
+                textbutton _("Fullscreen"):
+                    action [Function(sr.speak, u"Fullscreen", True), Preference("display", "fullscreen")]
+                    hovered Function(sr.speak, u"Fullscreen", True)
 
-                    textbutton _("Return"):
-                        action Return()
-                        hovered Function(sr.speak, u"Return", True)
+            null height 15
+
+            label _("Scene Volume"):
+                xalign 0.5
+
+            bar value Preference("music volume") hovered Function(sr.speak, u"Scene Volume", True) xsize 450 xalign 0.5
+
+            null height 10
+
+            label _("UI Volume"):
+                xalign 0.5
+
+            bar value Preference("sound volume") hovered Function(sr.speak, u"UI Volume", True) xsize 450 xalign 0.5
+
+            null height 20
+
+            textbutton _("Return"):
+                action Return()
+                hovered Function(sr.speak, u"Return", True)
+                xalign 0.5
+
+    key "game_menu" action Return()
+
+screen pause_prefs():
+    tag menu
+    use preferences
 
 # -------------------------------------------------------------
 # 7. CONFIRMATION SCREEN (Minimal, zero lag)
