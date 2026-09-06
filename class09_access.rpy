@@ -1,7 +1,6 @@
 # -*- coding: utf-8 -*-
-# Class of '09 Complete Non-Visual Accessibility Mod
-# Strictly isolates NVDA to prevent dual speech (no Windows SAPI overlap)
-# Hooks dialogue, choices, menus, save slots, and settings seamlessly.
+# Class of '09 Accessibility Mod - Optimized & Lag-Free
+# Eliminates speech spam, debounces NVDA calls, and removes unwanted auto-announcements.
 
 init -999 python:
     import sys
@@ -16,7 +15,7 @@ init -999 python:
             self.sapi = None
             self.active_driver = None
             self.read_dialogue = True
-            self.last_spoken = u""
+            self.last_spoken_text = u""
             self.last_who = u""
             self.last_what = u""
             self.current_choices = []
@@ -26,13 +25,11 @@ init -999 python:
             game_dir = renpy.config.gamedir
             is_64 = (sys.maxsize > 2**32)
 
-            # 1. STRICT PRIORITY: Try NVDA first
             nvda_dll = "nvdaControllerClient64.dll" if is_64 else "nvdaControllerClient32.dll"
             search_paths = [
                 os.path.join(game_dir, nvda_dll),
                 os.path.join(game_dir, "nvdaControllerClient.dll"),
                 os.path.join(os.path.dirname(game_dir), nvda_dll),
-                os.path.join(os.path.dirname(game_dir), "nvdaControllerClient.dll"),
                 nvda_dll
             ]
 
@@ -45,18 +42,15 @@ init -999 python:
                             self.nvda.nvdaController_speakText.argtypes = [ctypes.c_wchar_p]
                             self.nvda.nvdaController_speakText.restype = ctypes.c_long
                             self.active_driver = "NVDA"
-                            # If NVDA is running, do NOT load Tolk or SAPI to prevent double voice!
                             return
                     except Exception:
                         pass
 
-            # 2. Tolk Fallback (Only if NVDA is not active, for JAWS / SuperNova)
             tolk_dll = "Tolk64.dll" if is_64 else "Tolk32.dll"
             tolk_paths = [
                 os.path.join(game_dir, tolk_dll),
                 os.path.join(game_dir, "Tolk.dll"),
                 os.path.join(os.path.dirname(game_dir), tolk_dll),
-                os.path.join(os.path.dirname(game_dir), "Tolk.dll"),
                 tolk_dll
             ]
             for p in tolk_paths:
@@ -72,7 +66,6 @@ init -999 python:
                     except Exception:
                         pass
 
-            # 3. SAPI Fallback (Only if neither NVDA nor JAWS is running)
             try:
                 import win32com.client
                 self.sapi = win32com.client.Dispatch("SAPI.SpVoice")
@@ -93,8 +86,6 @@ init -999 python:
                         pass
             elif not isinstance(text, unicode):
                 text = unicode(text)
-            
-            # Strip Ren'Py style tags like {b}, {i}, {color=...}, {fast}, etc.
             text = re.sub(r'{[^}]*}', '', text)
             return text.strip()
 
@@ -103,7 +94,11 @@ init -999 python:
             if not clean:
                 return
 
-            # Exclusively use active driver to prevent dual speech
+            # Debounce: Do NOT re-send identical text to prevent NVDA lag
+            if clean == self.last_spoken_text:
+                return
+            self.last_spoken_text = clean
+
             if self.active_driver == "NVDA" and self.nvda:
                 try:
                     if interrupt:
@@ -131,20 +126,7 @@ init -999 python:
                     self.sapi = None
                     self.active_driver = None
 
-        def stop(self):
-            if self.active_driver == "NVDA" and self.nvda:
-                try:
-                    self.nvda.nvdaController_cancelSpeech()
-                except Exception:
-                    pass
-            elif self.active_driver == "TOLK" and self.tolk:
-                try:
-                    self.tolk.Tolk_Silence()
-                except Exception:
-                    pass
-
         def on_dialogue(self, who, what):
-            """Called whenever dialogue is shown or executed."""
             if renpy.predicting():
                 return
             if not self.read_dialogue:
@@ -158,55 +140,46 @@ init -999 python:
             else:
                 msg = clean_what
 
-            if msg == self.last_spoken:
-                return
-
-            self.last_spoken = msg
             self.last_who = clean_who
             self.last_what = clean_what
+            # Reset last_spoken_text to allow dialogue line to speak cleanly
+            self.last_spoken_text = u""
             self.speak(msg, interrupt=True)
 
         def on_choices_shown(self, items):
-            """Announces choice options without any beep chime."""
             if renpy.predicting():
                 return
             self.current_choices = [self.clean_text(item.caption) for item in items]
-            options_text = u", ".join([u"%d: %s" % (i + 1, c) for i, c in enumerate(self.current_choices)])
-            announcement = u"Decision point. %d choices available. %s" % (len(items), options_text)
-            self.speak(announcement, interrupt=False)
+            options_text = u", ".join([u"Choice %d: %s" % (i + 1, c) for i, c in enumerate(self.current_choices)])
+            self.last_spoken_text = u""
+            self.speak(options_text, interrupt=False)
 
         def repeat_last_dialogue(self):
             if self.last_what or self.last_who:
-                if self.last_who:
-                    msg = u"%s: %s" % (self.last_who, self.last_what)
-                else:
-                    msg = self.last_what
+                msg = (u"%s: %s" % (self.last_who, self.last_what)) if self.last_who else self.last_what
+                self.last_spoken_text = u""
                 self.speak(msg, interrupt=True)
-            else:
-                self.speak(u"No dialogue to repeat.", interrupt=True)
 
         def repeat_choices(self):
             if self.current_choices:
                 options_text = u", ".join([u"Choice %d: %s" % (i + 1, c) for i, c in enumerate(self.current_choices)])
+                self.last_spoken_text = u""
                 self.speak(options_text, interrupt=True)
-            else:
-                self.speak(u"No choices on screen.", interrupt=True)
 
         def toggle_dialogue_speech(self):
             self.read_dialogue = not self.read_dialogue
-            status = u"Dialogue screen reader speech enabled." if self.read_dialogue else u"Dialogue screen reader speech muted. Voice acting only."
+            status = u"Dialogue reading enabled." if self.read_dialogue else u"Dialogue reading muted."
+            self.last_spoken_text = u""
             self.speak(status, interrupt=True)
 
     sr = ScreenReaderManager()
 
-    # Silence Ren'Py built-in SAPI speech so only NVDA speaks
     try:
         import renpy.speech
         renpy.speech.speak = lambda *a, **kw: None
     except Exception:
         pass
 
-# Hook into Ren'Py's exports.say so EVERY single dialogue line is captured immediately
 init 100 python:
     _base_say = renpy.exports.say
 
@@ -222,9 +195,6 @@ init 100 python:
 # -------------------------------------------------------------
 screen say(who, what):
     style_prefix "say"
-
-    # Also hook directly into screen say display
-    $ sr.on_dialogue(who, what)
 
     window:
         id "window"
@@ -251,18 +221,16 @@ screen choice(items):
 
     vbox:
         for i, item in enumerate(items):
-            $ choice_desc = u"Choice %d of %d: %s" % (i + 1, len(items), sr.clean_text(item.caption))
+            $ choice_desc = u"Choice %d: %s" % (i + 1, sr.clean_text(item.caption))
             textbutton item.caption:
                 action [Play("sfx", "audio/PhoneSelect.mp3"), item.action]
                 hovered Function(sr.speak, choice_desc, True)
 
 # -------------------------------------------------------------
-# 3. MAIN MENU NAVIGATION
+# 3. MAIN MENU NAVIGATION (Zero auto-announcements, snappy buttons)
 # -------------------------------------------------------------
 screen navigation():
     style_prefix "navigation"
-
-    on "show" action Function(sr.speak, u"Main Menu. 1: New Game. 2: Continue. 3: Options. 4: About. 5: Exit. Use arrow keys or number keys.", False)
 
     imagebutton:
         idle "NEWGAME.png"
@@ -283,7 +251,7 @@ screen navigation():
         focus_mask "CONTINUE_mask.png"
         activate_sound "audio/MainMenuPress.mp3"
         hover_sound "audio/MainMenuRollover.mp3"
-        hovered Function(sr.speak, u"Continue. Load saved game.", True)
+        hovered Function(sr.speak, u"Continue", True)
         action ShowMenu("load")
 
     imagebutton:
@@ -294,7 +262,7 @@ screen navigation():
         focus_mask "OPTIONS_mask.png"
         activate_sound "audio/MainMenuPress.mp3"
         hover_sound "audio/MainMenuRollover.mp3"
-        hovered Function(sr.speak, u"Options and Preferences.", True)
+        hovered Function(sr.speak, u"Options", True)
         action ShowMenu("preferences")
 
     imagebutton:
@@ -316,7 +284,7 @@ screen navigation():
         focus_mask "EXIT_mask.png"
         activate_sound "audio/MainMenuPress.mp3"
         hover_sound "audio/MainMenuRollover.mp3"
-        hovered Function(sr.speak, u"Exit Game", True)
+        hovered Function(sr.speak, u"Exit", True)
         action Quit(confirm=not main_menu)
 
     key "1" action Start()
@@ -326,7 +294,7 @@ screen navigation():
     key "5" action Quit(confirm=not main_menu)
 
 # -------------------------------------------------------------
-# 4. IN-GAME QUICK MENU (Pause & Rollback)
+# 4. IN-GAME QUICK MENU
 # -------------------------------------------------------------
 screen quick_menu():
     zorder 100
@@ -336,7 +304,7 @@ screen quick_menu():
             idle "gui/pausebutton.png"
             hover "gui/pausebutton.png"
             action ShowMenu()
-            hovered Function(sr.speak, u"Pause Menu. Press Escape or click to open.", True)
+            hovered Function(sr.speak, u"Pause", True)
             xalign 0.92
             yalign .89
 
@@ -344,12 +312,12 @@ screen quick_menu():
             idle "gui/backbutton.png"
             hover "gui/backbutton.png"
             action Rollback()
-            hovered Function(sr.speak, u"Back. Rollback to previous line.", True)
+            hovered Function(sr.speak, u"Back", True)
             xalign 0.92
             yalign 0.98
 
 # -------------------------------------------------------------
-# 5. PAUSE SAVE & LOAD FILE SLOTS
+# 5. PAUSE SAVE & LOAD FILE SLOTS (No auto-blab, clean slot readout)
 # -------------------------------------------------------------
 init python:
     def get_slot_description(slot, title):
@@ -357,14 +325,12 @@ init python:
         if time_str:
             import time
             readable_time = time.strftime("%B %d, %Y at %I:%M %p", time.localtime(time_str))
-            return u"%s Slot %d: Saved on %s." % (title, slot, readable_time)
+            return u"Slot %d: Saved on %s." % (slot, readable_time)
         else:
-            return u"%s Slot %d: Empty." % (title, slot)
+            return u"Slot %d: Empty." % (slot)
 
 screen pause_file_slots(title):
     default page_name_value = FilePageNameInputValue(pattern=_("Page {}"), auto=_("Auto saves"), quick=_("Quick saves"))
-
-    on "show" action Function(sr.speak, u"%s menu. Select a slot to save or load, or Return to resume." % title, False)
 
     add "gui/nvl.png"
 
@@ -377,7 +343,7 @@ screen pause_file_slots(title):
             xalign 0.5
             yalign 0.0
             action page_name_value.Toggle()
-            hovered Function(sr.speak, u"Page selection. Current page: %s" % FilePageName(), True)
+            hovered Function(sr.speak, u"Page %s" % FilePageName(), True)
 
             input:
                 style "page_label_text"
@@ -421,12 +387,12 @@ screen pause_file_slots(title):
             if config.has_autosave:
                 textbutton _("{#auto_page}A"):
                     action FilePage("auto")
-                    hovered Function(sr.speak, u"Auto Saves Page", True)
+                    hovered Function(sr.speak, u"Auto Saves", True)
 
             if config.has_quicksave:
                 textbutton _("{#quick_page}Q"):
                     action FilePage("quick")
-                    hovered Function(sr.speak, u"Quick Saves Page", True)
+                    hovered Function(sr.speak, u"Quick Saves", True)
 
             for page in range(1, 10):
                 textbutton "[page]":
@@ -443,17 +409,15 @@ screen pause_file_slots(title):
             xalign 0.5
             yalign 0.90
             action Return()
-            hovered Function(sr.speak, u"Return to Game", True)
+            hovered Function(sr.speak, u"Return", True)
 
 # -------------------------------------------------------------
-# 6. PAUSE PREFERENCES / SETTINGS
+# 6. SETTINGS / PREFERENCES (COMPLETELY SILENT AS REQUESTED)
 # -------------------------------------------------------------
 screen pause_prefs():
     tag menu
     add "gui/nvl.png"
     style_prefix "alt_menu"
-
-    on "show" action Function(sr.speak, u"Preferences Menu. Window or Fullscreen, Scene Volume, UI Volume, Return.", False)
 
     vbox:
         xalign 0.5
@@ -466,11 +430,9 @@ screen pause_prefs():
                     style_prefix "radio"
                     label _("Display")
                     textbutton _("Window"):
-                        action [Function(sr.speak, u"Window mode selected", True), Preference("display", "window")]
-                        hovered Function(sr.speak, u"Display: Window", True)
+                        action Preference("display", "window")
                     textbutton _("Fullscreen"):
-                        action [Function(sr.speak, u"Fullscreen mode selected", True), Preference("display", "fullscreen")]
-                        hovered Function(sr.speak, u"Display: Fullscreen", True)
+                        action Preference("display", "fullscreen")
 
         null height (4 * gui.pref_spacing)
 
@@ -482,25 +444,22 @@ screen pause_prefs():
                 if config.has_sound:
                     label _("Scene Volume")
                     vbox:
-                        bar value Preference("music volume") hovered Function(sr.speak, u"Scene Volume Slider. Use Left and Right arrow keys to adjust.", True)
+                        bar value Preference("music volume")
 
                     label _("UI Volume")
                     vbox:
-                        bar value Preference("sound volume") hovered Function(sr.speak, u"UI Sound Volume Slider. Use Left and Right arrow keys to adjust.", True)
+                        bar value Preference("sound volume")
 
                     textbutton _("Return"):
                         action Return()
-                        hovered Function(sr.speak, u"Return to Game", True)
 
 # -------------------------------------------------------------
-# 7. CONFIRMATION SCREEN
+# 7. CONFIRMATION SCREEN (Minimal, zero lag)
 # -------------------------------------------------------------
 screen confirm(message, yes_action, no_action):
     modal True
     zorder 200
     style_prefix "confirm"
-
-    on "show" action Function(sr.speak, u"%s. Press Left Arrow for Yes, Right Arrow for No." % sr.clean_text(message), True)
 
     add "gui/overlay/confirm.png"
 
@@ -528,26 +487,14 @@ screen confirm(message, yes_action, no_action):
     key "game_menu" action no_action
 
 # -------------------------------------------------------------
-# 8. GLOBAL ACCESSIBILITY HOTKEYS
+# 8. GLOBAL HOTKEYS
 # -------------------------------------------------------------
 init python:
-    def action_repeat_dialogue():
-        sr.repeat_last_dialogue()
-
-    def action_repeat_choices():
-        sr.repeat_choices()
-
-    def action_toggle_dialogue():
-        sr.toggle_dialogue_speech()
-
-    # Bind H to repeat dialogue
     config.keymap['sr_repeat_dialogue'] = ['h', 'H']
-    config.underlay[0].keymap['sr_repeat_dialogue'] = action_repeat_dialogue
+    config.underlay[0].keymap['sr_repeat_dialogue'] = sr.repeat_last_dialogue
 
-    # Bind C to repeat choices
     config.keymap['sr_repeat_choices'] = ['c', 'C']
-    config.underlay[0].keymap['sr_repeat_choices'] = action_repeat_choices
+    config.underlay[0].keymap['sr_repeat_choices'] = sr.repeat_choices
 
-    # Bind D to toggle dialogue TTS
     config.keymap['sr_toggle_dialogue'] = ['d', 'D']
-    config.underlay[0].keymap['sr_toggle_dialogue'] = action_toggle_dialogue
+    config.underlay[0].keymap['sr_toggle_dialogue'] = sr.toggle_dialogue_speech
