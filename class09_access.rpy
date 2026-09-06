@@ -148,12 +148,8 @@ init -999 python:
                     pass
 
         def play_choice_cue(self):
-            """Chime when a decision point appears."""
-            try:
-                ctypes.windll.kernel32.Beep(587, 80)
-                ctypes.windll.kernel32.Beep(880, 120)
-            except Exception:
-                pass
+            """Audio earcon chime disabled as requested."""
+            pass
 
         def play_select_cue(self):
             """Click tone when an item is selected."""
@@ -188,7 +184,6 @@ init -999 python:
 
         def on_choices_shown(self, items):
             """Plays prompt sound and announces available choices."""
-            self.play_choice_cue()
             self.current_choices = [self.clean_text(item.caption) for item in items]
             options_text = u", ".join([u"%d: %s" % (i + 1, c) for i, c in enumerate(self.current_choices)])
             announcement = u"Decision point. %d choices available. %s" % (len(items), options_text)

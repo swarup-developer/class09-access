@@ -8,7 +8,7 @@
 ![Voice Acting: 100% Fully Voiced](https://img.shields.io/badge/Voice%20Acting-100%25%20Fully%20Voiced-purple?style=for-the-badge)
 
 ### The Complete Screen Reader Accessibility Mod for *Class of '09* & *Class of '09: The Re-Up*
-*Audio choice chimes, spoken branching decisions, NVDA / SAPI screen reader integration, and dialogue history replay.*
+*Spoken branching decisions, NVDA / SAPI screen reader integration, and dialogue history replay.*
 
 </div>
 
@@ -24,7 +24,6 @@
 
 ## ✨ Features
 
-1. **Audio Choice Earcon**: Automatically plays a two-tone chime (`D5 -> A5`) whenever a branching choice appears on screen, alerting the player that input is required.
 2. **Instant Screen Reader Speech**:
    * Bridges directly with **NVDA** via `nvdaControllerClient`.
    * Automatically falls back to **Windows SAPI5** or Ren'Py speech engine.
