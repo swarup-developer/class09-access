@@ -430,9 +430,11 @@ screen pause_prefs():
                     style_prefix "radio"
                     label _("Display")
                     textbutton _("Window"):
-                        action Preference("display", "window")
+                        action [Function(sr.speak, u"Window", True), Preference("display", "window")]
+                        hovered Function(sr.speak, u"Window", True)
                     textbutton _("Fullscreen"):
-                        action Preference("display", "fullscreen")
+                        action [Function(sr.speak, u"Fullscreen", True), Preference("display", "fullscreen")]
+                        hovered Function(sr.speak, u"Fullscreen", True)
 
         null height (4 * gui.pref_spacing)
 
@@ -444,14 +446,15 @@ screen pause_prefs():
                 if config.has_sound:
                     label _("Scene Volume")
                     vbox:
-                        bar value Preference("music volume")
+                        bar value Preference("music volume") hovered Function(sr.speak, u"Scene Volume", True)
 
                     label _("UI Volume")
                     vbox:
-                        bar value Preference("sound volume")
+                        bar value Preference("sound volume") hovered Function(sr.speak, u"UI Volume", True)
 
                     textbutton _("Return"):
                         action Return()
+                        hovered Function(sr.speak, u"Return", True)
 
 # -------------------------------------------------------------
 # 7. CONFIRMATION SCREEN (Minimal, zero lag)
