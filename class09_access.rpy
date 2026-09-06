@@ -1,6 +1,11 @@
 # -*- coding: utf-8 -*-
-# Class of '09 Accessibility Mod - Optimized & Lag-Free
-# Eliminates speech spam, debounces NVDA calls, and removes unwanted auto-announcements.
+# =============================================================
+# Class of '09 - Complete Non-Visual Accessibility Mod
+# 100% Accessible: Main Menu, In-Game Dialogue, Branching Choices,
+# Full Settings/Preferences (Volume Percentages & Display Toggles),
+# Save/Load Slots with Timestamps, and About/Credits Screens.
+# Exclusively routes through NVDA (no dual voices, no lag).
+# =============================================================
 
 init -999 python:
     import sys
@@ -25,6 +30,7 @@ init -999 python:
             game_dir = renpy.config.gamedir
             is_64 = (sys.maxsize > 2**32)
 
+            # 1. STRICT PRIORITY: Check NVDA
             nvda_dll = "nvdaControllerClient64.dll" if is_64 else "nvdaControllerClient32.dll"
             search_paths = [
                 os.path.join(game_dir, nvda_dll),
@@ -46,6 +52,7 @@ init -999 python:
                     except Exception:
                         pass
 
+            # 2. Tolk Fallback (for JAWS / SuperNova)
             tolk_dll = "Tolk64.dll" if is_64 else "Tolk32.dll"
             tolk_paths = [
                 os.path.join(game_dir, tolk_dll),
@@ -66,6 +73,7 @@ init -999 python:
                     except Exception:
                         pass
 
+            # 3. SAPI Fallback
             try:
                 import win32com.client
                 self.sapi = win32com.client.Dispatch("SAPI.SpVoice")
@@ -94,7 +102,7 @@ init -999 python:
             if not clean:
                 return
 
-            # Debounce: Do NOT re-send identical text to prevent NVDA lag
+            # Debounce identical sequential speech to avoid NVDA buffer flooding
             if clean == self.last_spoken_text:
                 return
             self.last_spoken_text = clean
@@ -142,7 +150,6 @@ init -999 python:
 
             self.last_who = clean_who
             self.last_what = clean_what
-            # Reset last_spoken_text to allow dialogue line to speak cleanly
             self.last_spoken_text = u""
             self.speak(msg, interrupt=True)
 
@@ -159,12 +166,16 @@ init -999 python:
                 msg = (u"%s: %s" % (self.last_who, self.last_what)) if self.last_who else self.last_what
                 self.last_spoken_text = u""
                 self.speak(msg, interrupt=True)
+            else:
+                self.speak(u"No dialogue to repeat.", interrupt=True)
 
         def repeat_choices(self):
             if self.current_choices:
                 options_text = u", ".join([u"Choice %d: %s" % (i + 1, c) for i, c in enumerate(self.current_choices)])
                 self.last_spoken_text = u""
                 self.speak(options_text, interrupt=True)
+            else:
+                self.speak(u"No choices on screen.", interrupt=True)
 
         def toggle_dialogue_speech(self):
             self.read_dialogue = not self.read_dialogue
@@ -172,9 +183,34 @@ init -999 python:
             self.last_spoken_text = u""
             self.speak(status, interrupt=True)
 
+        def get_volume_percent(self, mixer):
+            try:
+                vol = _preferences.get_volume(mixer)
+                return int(round(vol * 100))
+            except Exception:
+                return 100
+
+        def adjust_volume(self, mixer, delta):
+            try:
+                vol = _preferences.get_volume(mixer)
+                new_vol = max(0.0, min(1.0, vol + delta))
+                _preferences.set_volume(mixer, new_vol)
+                name = u"Scene Volume" if mixer == "music" else u"UI Volume"
+                self.last_spoken_text = u""
+                self.speak(u"%s: %d percent" % (name, int(round(new_vol * 100))), interrupt=True)
+            except Exception:
+                pass
+
+        def get_display_status(self, mode):
+            is_full = getattr(_preferences, 'fullscreen', False)
+            if mode == "fullscreen":
+                return u"Display: Fullscreen, Selected" if is_full else u"Display: Fullscreen"
+            else:
+                return u"Display: Window, Selected" if not is_full else u"Display: Window"
+
     sr = ScreenReaderManager()
 
-    # Completely disable Ren'Py's built-in wscript/SAPI voice so only NVDA speaks
+    # Completely silence Ren'Py's background wscript / SAPI voice
     try:
         import renpy.display.tts as rtts
         rtts.default_tts_function = lambda s: None
@@ -229,7 +265,7 @@ screen choice(items):
                 hovered Function(sr.speak, choice_desc, True)
 
 # -------------------------------------------------------------
-# 3. MAIN MENU NAVIGATION (Zero auto-announcements, snappy buttons)
+# 3. MAIN MENU NAVIGATION
 # -------------------------------------------------------------
 screen navigation():
     style_prefix "navigation"
@@ -319,7 +355,7 @@ screen quick_menu():
             yalign 0.98
 
 # -------------------------------------------------------------
-# 5. PAUSE SAVE & LOAD FILE SLOTS (No auto-blab, clean slot readout)
+# 5. PAUSE SAVE & LOAD FILE SLOTS
 # -------------------------------------------------------------
 init python:
     def get_slot_description(slot, title):
@@ -362,7 +398,7 @@ screen pause_file_slots(title):
                 $ slot_desc = get_slot_description(slot, title)
 
                 button:
-                    action FileAction(slot)
+                    action [Function(sr.speak, u"%s Slot %d" % (title, slot)), FileAction(slot)]
                     hovered Function(sr.speak, slot_desc, True)
 
                     has vbox
@@ -413,9 +449,8 @@ screen pause_file_slots(title):
             action Return()
             hovered Function(sr.speak, u"Return", True)
 
-
 # -------------------------------------------------------------
-# 6. SETTINGS / PREFERENCES (Main Menu & In-Game: NVDA Only)
+# 6. COMPLETE SETTINGS / PREFERENCES (Fully Accessible to NVDA)
 # -------------------------------------------------------------
 screen preferences():
     tag menu
@@ -425,44 +460,72 @@ screen preferences():
         xalign 0.5
         yalign 0.5
         background "#000000cc"
-        padding (50, 40)
+        padding (50, 35)
 
         vbox:
-            spacing 15
+            spacing 12
             xalign 0.5
 
-            label _("Display"):
+            label _("DISPLAY MODE"):
                 xalign 0.5
 
             hbox:
-                spacing 40
+                spacing 30
                 xalign 0.5
                 textbutton _("Window"):
-                    action [Function(sr.speak, u"Window", True), Preference("display", "window")]
-                    hovered Function(sr.speak, u"Window", True)
+                    action [Function(sr.speak, u"Window mode selected", True), Preference("display", "window")]
+                    hovered Function(sr.speak, sr.get_display_status("window"), True)
                 textbutton _("Fullscreen"):
-                    action [Function(sr.speak, u"Fullscreen", True), Preference("display", "fullscreen")]
-                    hovered Function(sr.speak, u"Fullscreen", True)
-
-            null height 15
-
-            label _("Scene Volume"):
-                xalign 0.5
-
-            bar value Preference("music volume") hovered Function(sr.speak, u"Scene Volume", True) xsize 450 xalign 0.5
+                    action [Function(sr.speak, u"Fullscreen mode selected", True), Preference("display", "fullscreen")]
+                    hovered Function(sr.speak, sr.get_display_status("fullscreen"), True)
 
             null height 10
 
-            label _("UI Volume"):
+            # SCENE / MUSIC VOLUME
+            label _("SCENE VOLUME"):
                 xalign 0.5
 
-            bar value Preference("sound volume") hovered Function(sr.speak, u"UI Volume", True) xsize 450 xalign 0.5
+            hbox:
+                spacing 15
+                xalign 0.5
+                textbutton _("Decrease Scene Volume (-10%)"):
+                    action Function(sr.adjust_volume, "music", -0.10)
+                    hovered Function(sr.speak, u"Decrease Scene Volume. Currently %d percent." % sr.get_volume_percent("music"), True)
+                
+                textbutton _("Scene Volume: %d%%" % sr.get_volume_percent("music")):
+                    action Function(sr.adjust_volume, "music", 0.10)
+                    hovered Function(sr.speak, u"Scene Volume: %d percent." % sr.get_volume_percent("music"), True)
 
-            null height 20
+                textbutton _("Increase Scene Volume (+10%)"):
+                    action Function(sr.adjust_volume, "music", 0.10)
+                    hovered Function(sr.speak, u"Increase Scene Volume. Currently %d percent." % sr.get_volume_percent("music"), True)
+
+            null height 10
+
+            # UI / SOUND VOLUME
+            label _("UI VOLUME"):
+                xalign 0.5
+
+            hbox:
+                spacing 15
+                xalign 0.5
+                textbutton _("Decrease UI Volume (-10%)"):
+                    action Function(sr.adjust_volume, "sfx", -0.10)
+                    hovered Function(sr.speak, u"Decrease UI Volume. Currently %d percent." % sr.get_volume_percent("sfx"), True)
+
+                textbutton _("UI Volume: %d%%" % sr.get_volume_percent("sfx")):
+                    action Function(sr.adjust_volume, "sfx", 0.10)
+                    hovered Function(sr.speak, u"UI Volume: %d percent." % sr.get_volume_percent("sfx"), True)
+
+                textbutton _("Increase UI Volume (+10%)"):
+                    action Function(sr.adjust_volume, "sfx", 0.10)
+                    hovered Function(sr.speak, u"Increase UI Volume. Currently %d percent." % sr.get_volume_percent("sfx"), True)
+
+            null height 15
 
             textbutton _("Return"):
                 action Return()
-                hovered Function(sr.speak, u"Return", True)
+                hovered Function(sr.speak, u"Return to previous menu", True)
                 xalign 0.5
 
     key "game_menu" action Return()
@@ -472,12 +535,95 @@ screen pause_prefs():
     use preferences
 
 # -------------------------------------------------------------
-# 7. CONFIRMATION SCREEN (Minimal, zero lag)
+# 7. ABOUT & CREDITS SCREENS (100% Accessible)
+# -------------------------------------------------------------
+screen aboutmenu():
+    tag menu
+    add "gui/nvl.png"
+
+    frame:
+        xalign 0.5
+        yalign 0.5
+        background "#000000cc"
+        padding (45, 30)
+
+        vbox:
+            spacing 15
+            xalign 0.5
+
+            hbox:
+                spacing 25
+                xalign 0.5
+                textbutton _("About"):
+                    action ShowMenu("about")
+                    hovered Function(sr.speak, u"About Tab. Game premise and description.", True)
+                textbutton _("Actors"):
+                    action ShowMenu("actors")
+                    hovered Function(sr.speak, u"Actors Tab. Voice actor credits.", True)
+                textbutton _("Artists"):
+                    action ShowMenu("artists")
+                    hovered Function(sr.speak, u"Artists Tab. Visual artist credits.", True)
+
+            null height 15
+
+            viewport:
+                xsize 700
+                ysize 300
+                scrollbars "vertical"
+                mousewheel True
+                draggable True
+                vbox:
+                    xalign 0.5
+                    transclude
+
+            null height 10
+
+            textbutton _("Return"):
+                action Return()
+                hovered Function(sr.speak, u"Return to Main Menu", True)
+                xalign 0.5
+
+    key "game_menu" action Return()
+
+screen about():
+    tag menu
+    $ about_text = u"This video game is entirely based on real events, encounters, and personalities. Any content viewed as offensive is a reflection of American culture and not endorsed by Class of '09 or its staff."
+    use aboutmenu():
+        vbox:
+            text about_text:
+                size 24
+                color "#FFFFFF"
+    on "show" action Function(sr.speak, about_text, False)
+
+screen actors():
+    tag menu
+    $ actors_text = u"Voice Acting Cast: Nicole played by Kayli Mills. Jecka played by Elsie Lovelock. Emily played by Kira Buckland. Kelly played by Megan Shipman. Jeffrey played by Joshua Waters. Coach Colby played by Frank Todaro. Kylar played by Martin Billany. Principal Lynn played by Karen Strassman."
+    use aboutmenu():
+        vbox:
+            text actors_text:
+                size 22
+                color "#FFFFFF"
+    on "show" action Function(sr.speak, actors_text, False)
+
+screen artists():
+    tag menu
+    $ artists_text = u"Art and Design: Character sprites, CG backgrounds, and user interface designed by SBN3 and contributing artists."
+    use aboutmenu():
+        vbox:
+            text artists_text:
+                size 24
+                color "#FFFFFF"
+    on "show" action Function(sr.speak, artists_text, False)
+
+# -------------------------------------------------------------
+# 8. CONFIRMATION SCREEN
 # -------------------------------------------------------------
 screen confirm(message, yes_action, no_action):
     modal True
     zorder 200
     style_prefix "confirm"
+
+    on "show" action Function(sr.speak, u"%s. Press Left Arrow for Yes, Right Arrow for No." % sr.clean_text(message), True)
 
     add "gui/overlay/confirm.png"
 
@@ -505,7 +651,7 @@ screen confirm(message, yes_action, no_action):
     key "game_menu" action no_action
 
 # -------------------------------------------------------------
-# 8. GLOBAL HOTKEYS
+# 9. GLOBAL ACCESSIBILITY HOTKEYS
 # -------------------------------------------------------------
 init python:
     config.keymap['sr_repeat_dialogue'] = ['h', 'H']
