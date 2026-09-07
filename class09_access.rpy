@@ -10,6 +10,7 @@
 init -999 python:
     import sys
     import os
+    import time
     import ctypes
     import re
 
@@ -21,12 +22,17 @@ init -999 python:
             self.active_driver = None
             self.read_dialogue = True
             self.last_spoken_text = u""
+            self.last_spoken_time = 0.0
             self.last_who = u""
             self.last_what = u""
             self.current_choices = []
             self.current_say_id = 0
             self.spoken_say_id = -1
             self.pause_depth = 0
+            self.last_line_auto_advance = False
+            self.menu_index = 0
+            self.menu_labels = [u"New Game", u"Continue and Load Game", u"Options", u"About", u"Exit Game"]
+            self.shown_announced = set()
             self.init_speech()
 
         def init_speech(self):
@@ -46,7 +52,20 @@ init -999 python:
                 if os.path.exists(p):
                     try:
                         dll = ctypes.cdll.LoadLibrary(p)
-                        if dll.nvdaController_testIfRunning() == 0:
+                        # NVDA may still be starting up when the game
+                        # launches. Retry briefly before falling back to
+                        # Tolk / SAPI so we never end up with a second
+                        # TTS voice while NVDA is actually running.
+                        nvda_running = False
+                        for _attempt in range(5):
+                            try:
+                                if dll.nvdaController_testIfRunning() == 0:
+                                    nvda_running = True
+                                    break
+                            except Exception:
+                                break
+                            time.sleep(0.2)
+                        if nvda_running:
                             self.nvda = dll
                             self.nvda.nvdaController_speakText.argtypes = [ctypes.c_wchar_p]
                             self.nvda.nvdaController_speakText.restype = ctypes.c_long
@@ -100,15 +119,22 @@ init -999 python:
             text = re.sub(r'{[^}]*}', '', text)
             return text.strip()
 
-        def speak(self, text, interrupt=True):
+        def speak(self, text, interrupt=True, force=False, debounce=True):
             clean = self.clean_text(text)
             if not clean:
                 return
 
-            # Debounce identical sequential speech to avoid NVDA buffer flooding
-            if clean == self.last_spoken_text:
+            # Debounce identical sequential speech so menu / choice / hover
+            # announcements that fire several times in a row can never flood
+            # the NVDA buffer. Dialogue lines bypass the debounce and rely on
+            # the line-id guard instead, so two identical consecutive lines
+            # both still get read. `force` bypasses the debounce for
+            # intentional repeats (H, C, menu announcements, status toggles).
+            now = time.time()
+            if (not force) and debounce and clean == self.last_spoken_text and (now - self.last_spoken_time) < 0.5:
                 return
             self.last_spoken_text = clean
+            self.last_spoken_time = now
 
             if self.active_driver == "NVDA" and self.nvda:
                 try:
@@ -149,6 +175,7 @@ init -999 python:
 
         def stop_speech(self):
             self.last_spoken_text = u""
+            self.last_spoken_time = 0.0
             try:
                 if self.active_driver == "NVDA" and self.nvda:
                     self.nvda.nvdaController_cancelSpeech()
@@ -160,22 +187,48 @@ init -999 python:
                 pass
 
         def on_say_advance(self):
-            if not self.pause_depth:
+            # Never advance the line counter for lines that are only being
+            # predicted, or while the game is skipping -- otherwise the
+            # duplicate-suppression guard below gets out of sync.
+            if not self.pause_depth and not renpy.predicting() and not renpy.config.skipping:
                 self.current_say_id += 1
 
-        def on_dialogue(self, who, what):
+        def on_dialogue(self, who, what, interrupt=True):
             if renpy.predicting():
                 return
             if not self.read_dialogue:
                 return
             if self.pause_depth:
                 return
+            # While skipping (Tab / Ctrl+Tab / auto-skip) the lines flash by
+            # without any user interaction. Reading each one with an
+            # interrupt would produce the "reads everything at high speed"
+            # stutter, so stay silent and let the player read normally.
+            if renpy.config.skipping:
+                return
 
             clean_who = self.clean_text(who) if who else u""
             clean_what = self.clean_text(what) if what else u""
 
+            # Ignore empty filler lines (e.g. "window auto" placeholders)
+            # without touching the repeat-last-dialogue buffer.
+            if not clean_what:
+                return
+
             if self.spoken_say_id == self.current_say_id and clean_who == self.last_who and clean_what == self.last_what:
                 return
+
+            # Class of '09 writes every line with {p=X}{nw}, which makes the
+            # game auto-advance when the timed pause elapses (it is voice
+            # acted, so the pause matches the actor's line). When the PREVIOUS
+            # line could auto-advance, the current line may have appeared
+            # without a click -- queue it instead of cancelling NVDA
+            # mid-sentence. Otherwise the reader is constantly cut off and it
+            # sounds like the game is "reading very fast / skipping
+            # everything".
+            if self.last_line_auto_advance:
+                interrupt = False
+            self.last_line_auto_advance = u"{nw}" in (what or u"")
 
             self.spoken_say_id = self.current_say_id
             self.last_who = clean_who
@@ -187,40 +240,50 @@ init -999 python:
             else:
                 msg = clean_what
 
-            self.last_spoken_text = u""
-            self.speak(msg, interrupt=True)
+            # `interrupt` is False for lines the game shows without waiting
+            # for input (rapid-fire / cinematic narration). Those must be
+            # queued instead of cancelling whatever is currently being read,
+            # otherwise every line cuts off the previous one and the game
+            # sounds like it is "skipping everything".
+            self.speak(msg, interrupt=interrupt, debounce=False)
 
         def on_choices_shown(self, items):
             if renpy.predicting():
                 return
             if self.pause_depth:
                 return
+            if renpy.config.skipping:
+                return
             self.current_choices = [self.clean_text(item.caption) for item in items]
             options_text = u", ".join([u"Choice %d: %s" % (i + 1, c) for i, c in enumerate(self.current_choices)])
-            self.last_spoken_text = u""
             self.speak(options_text, interrupt=False)
 
         def repeat_last_dialogue(self):
+            # Never run during Ren'Py's screen prediction, which executes
+            # keymap actions as part of predicting a screen.
+            if renpy.predicting():
+                return
             if self.last_what or self.last_who:
                 msg = (u"%s: %s" % (self.last_who, self.last_what)) if self.last_who else self.last_what
-                self.last_spoken_text = u""
-                self.speak(msg, interrupt=True)
+                self.speak(msg, interrupt=True, force=True)
             else:
-                self.speak(u"No dialogue to repeat.", interrupt=True)
+                self.speak(u"No dialogue to repeat.", interrupt=True, force=True)
 
         def repeat_choices(self):
+            if renpy.predicting():
+                return
             if self.current_choices:
                 options_text = u", ".join([u"Choice %d: %s" % (i + 1, c) for i, c in enumerate(self.current_choices)])
-                self.last_spoken_text = u""
-                self.speak(options_text, interrupt=True)
+                self.speak(options_text, interrupt=True, force=True)
             else:
-                self.speak(u"No choices on screen.", interrupt=True)
+                self.speak(u"No choices on screen.", interrupt=True, force=True)
 
         def toggle_dialogue_speech(self):
+            if renpy.predicting():
+                return
             self.read_dialogue = not self.read_dialogue
             status = u"Dialogue reading enabled." if self.read_dialogue else u"Dialogue reading muted."
-            self.last_spoken_text = u""
-            self.speak(status, interrupt=True)
+            self.speak(status, interrupt=True, force=True)
 
         def get_volume_percent(self, mixer):
             try:
@@ -235,7 +298,6 @@ init -999 python:
                 new_vol = max(0.0, min(1.0, vol + delta))
                 _preferences.set_volume(mixer, new_vol)
                 name = u"Scene Volume" if mixer == "music" else u"UI Volume"
-                self.last_spoken_text = u""
                 self.speak(u"%s: %d percent" % (name, int(round(new_vol * 100))), interrupt=True)
             except Exception:
                 pass
@@ -247,22 +309,163 @@ init -999 python:
             else:
                 return u"Display: Window, Selected" if not is_full else u"Display: Window"
 
+        # ---------------------------------------------------------
+        # MAIN MENU NAVIGATION
+        #
+        # The five menu buttons are full-screen images stacked on top of
+        # each other, so Ren'Py's focus system can never move between them
+        # with the arrow keys (nothing is focused, nothing is spoken).
+        # Navigation is driven by an explicit selection index instead.
+        # ---------------------------------------------------------
+        def nav_set(self, index):
+            self.menu_index = index
+
+        def nav_move(self, delta):
+            self.menu_index = (self.menu_index + delta) % len(self.menu_labels)
+            self.speak(self.menu_labels[self.menu_index], interrupt=True, force=True)
+
+        def nav_reset(self):
+            self.menu_index = 0
+            self.speak(u"Main Menu. 1: New Game. 2: Continue and Load Game. 3: Options. 4: About. 5: Exit Game. Use the arrow keys or the number keys.", interrupt=False, force=True)
+
+        def nav_activate(self):
+            index = self.menu_index
+            self.speak(self.menu_labels[index], interrupt=True, force=True)
+            if index == 0:
+                renpy.run(Start())
+            elif index == 1:
+                renpy.run(ShowMenu("load"))
+            elif index == 2:
+                renpy.run(ShowMenu("preferences"))
+            elif index == 3:
+                renpy.run(ShowMenu("about"))
+            else:
+                renpy.run(Quit(confirm=not main_menu))
+
+        # -----------------------------------------------------------------
+        # SCREEN WATCHDOG
+        #
+        # Ren'Py only fires a screen's `on "show"` action for screens shown
+        # through `call screen` or a non-transient `show_screen`. The menus
+        # opened by the engine's standard game-menu path (the pause menu,
+        # Options, Save/Load, About...) are shown transiently, so their
+        # on-show announcements never run and the game would be silent when
+        # they appear. This watchdog runs on a short periodic tick and
+        # announces each such screen the moment it appears (and again each
+        # time it is reopened).
+        # -----------------------------------------------------------------
+        def screen_watch(self):
+            try:
+                present = set()
+                for n in (u"pause_menu", u"pause", u"game_menu", u"save", u"load",
+                          u"preferences", u"about", u"actors", u"artists"):
+                    try:
+                        if renpy.get_screen(n):
+                            present.add(n)
+                    except Exception:
+                        pass
+
+                newly = present - self.shown_announced
+                for n in sorted(newly):
+                    if n in (u"pause_menu", u"pause", u"game_menu"):
+                        self.begin_pause()
+                        self.speak(u"Pause Menu. 1: Resume. 2: Save Game. 3: Load Game. 4: Options. 5: Main Menu. 6: Quit Game. Press Escape to resume.", False, True)
+                    elif n == u"save":
+                        self.speak(u"Save Menu. Select a slot, or press Escape to return.", False, True)
+                    elif n == u"load":
+                        self.speak(u"Load Menu. Select a slot, or press Escape to return.", False, True)
+                    elif n == u"preferences":
+                        self.speak(u"Options Menu. Display Mode and Volume Controls. Press Escape to return.", False, True)
+                    elif n == u"about":
+                        self.speak(u"About. This video game is entirely based on real events, encounters, and personalities. Any content viewed as offensive is a reflection of American culture and not endorsed by Class of 09 or its staff.", False, True)
+                    elif n == u"actors":
+                        self.speak(u"Voice Acting Cast. Nicole played by Kayli Mills. Jecka played by Elsie Lovelock. Emily played by Kira Buckland. Kelly played by Megan Shipman. Jeffrey played by Joshua Waters. Coach Colby played by Frank Todaro. Kylar played by Martin Billany. Principal Lynn played by Karen Strassman.", False, True)
+                    elif n == u"artists":
+                        self.speak(u"Art and Design. Character sprites, CG backgrounds, and user interface designed by SBN3 and contributing artists.", False, True)
+
+                self.shown_announced = present
+            except Exception:
+                pass
+
     sr = ScreenReaderManager()
 
-    # Completely silence Ren'Py's background wscript / SAPI voice
+    # -------------------------------------------------------------
+    # Ren'Py self-voicing / SAPI lockdown.
+    #
+    # Ren'Py's built-in self-voicing reads *every* screen and dialogue
+    # line through Windows SAPI ("wscript say.vbs") whenever it is
+    # enabled (V / Shift+V / saved preference). Running it at the same
+    # time as this mod produces two voices speaking at once and makes
+    # the game read everything at high speed. When we have our own
+    # driver (NVDA / Tolk / SAPI) we disable Ren'Py's TTS completely
+    # and keep it disabled.
+    # -------------------------------------------------------------
     try:
         import renpy.display.tts as rtts
-        rtts.default_tts_function = lambda s: None
-        config.tts_function = lambda s: None
     except Exception:
-        pass
+        rtts = None
+
+    _last_watch = [0.0]
+    def tts_lockdown():
+        # Screen watchdog: announce transiently-shown menus shortly after
+        # they appear (their `on "show"` actions never fire).
+        try:
+            if time.time() - _last_watch[0] >= 0.4:
+                _last_watch[0] = time.time()
+                sr.screen_watch()
+        except Exception:
+            pass
+
+        if not sr.active_driver:
+            return
+        try:
+            if rtts is not None:
+                rtts.default_tts_function = None
+            config.tts_function = None
+            renpy.game.preferences.self_voicing = False
+        except Exception:
+            pass
+
+    tts_lockdown()
+
+    # Disable the built-in self-voicing hotkeys (V, Shift+V, C, Shift+C)
+    # and remove the bindings that collide with this mod's own hotkeys
+    # (H = repeat dialogue, C = repeat choices, D = toggle dialogue TTS).
+    if sr.active_driver:
+        try:
+            km = config.underlay[0].keymap
+            km.pop("self_voicing", None)
+            km.pop("clipboard_voicing", None)
+            km.pop("debug_voicing", None)
+            km["hide_windows"] = [k for k in km.get("hide_windows", []) if k not in ("h", "H")]
+            km["developer"] = [k for k in km.get("developer", []) if k != "shift_K_d"]
+            config.keymap["self_voicing"] = []
+            config.keymap["clipboard_voicing"] = []
+            config.keymap["debug_voicing"] = []
+            config.keymap["hide_windows"] = [k for k in config.keymap.get("hide_windows", []) if k not in ("h", "H")]
+            config.keymap["developer"] = [k for k in config.keymap.get("developer", []) if k != "shift_K_d"]
+        except Exception:
+            pass
+
+        # Watchdog: re-assert the lockdown on every periodic tick so a
+        # toggle from a game screen or a restored preference can never
+        # resurrect Ren'Py's second voice mid-game.
+        try:
+            config.periodic_callbacks.append(tts_lockdown)
+        except Exception:
+            pass
 
 init 100 python:
     _base_say = renpy.exports.say
 
     def _accessible_say_hook(who, what, *args, **kwargs):
         sr.on_say_advance()
-        sr.on_dialogue(who, what)
+        # Determine whether this line waits for player input. Lines shown
+        # without waiting (interact=False) are queued, not interrupting.
+        interact = kwargs.get("interact", True)
+        if args:
+            interact = args[0]
+        sr.on_dialogue(who, what, interrupt=bool(interact))
         return _base_say(who, what, *args, **kwargs)
 
     renpy.exports.say = _accessible_say_hook
@@ -312,15 +515,38 @@ screen choice(items):
     vbox:
         for i, item in enumerate(items):
             $ choice_desc = u"Choice %d: %s" % (i + 1, sr.clean_text(item.caption))
+            # The first button grabs focus the moment the menu appears and
+            # would otherwise cancel the "Decision point..." announcement
+            # before it is spoken. Queue it instead of interrupting.
+            $ choice_interrupt = (i > 0)
             textbutton item.caption:
                 action [Play("sfx", "audio/PhoneSelect.mp3"), item.action]
-                hovered Function(sr.speak, choice_desc, True)
+                hovered Function(sr.speak, choice_desc, choice_interrupt)
 
 # -------------------------------------------------------------
 # 3. MAIN MENU NAVIGATION
 # -------------------------------------------------------------
 screen navigation():
     style_prefix "navigation"
+
+    # Announce the whole menu when it appears (nothing is focused at launch,
+    # so without this the game would be completely silent). Arrow keys and
+    # number keys drive the selection index with spoken feedback; Enter and
+    # Space activate the selected option. Mouse hover still speaks and
+    # clicks still activate, through the same index.
+    on "show" action Function(sr.nav_reset)
+
+    key "K_DOWN" action Function(sr.nav_move, 1)
+    key "K_UP" action Function(sr.nav_move, -1)
+    key "K_RETURN" action Function(sr.nav_activate)
+    key "K_SPACE" action Function(sr.nav_activate)
+    key "K_KP_ENTER" action Function(sr.nav_activate)
+
+    key "1" action [Function(sr.nav_set, 0), Function(sr.nav_activate)]
+    key "2" action [Function(sr.nav_set, 1), Function(sr.nav_activate)]
+    key "3" action [Function(sr.nav_set, 2), Function(sr.nav_activate)]
+    key "4" action [Function(sr.nav_set, 3), Function(sr.nav_activate)]
+    key "5" action [Function(sr.nav_set, 4), Function(sr.nav_activate)]
 
     imagebutton:
         idle "NEWGAME.png"
@@ -330,8 +556,8 @@ screen navigation():
         focus_mask "NEWGAME_mask.png"
         activate_sound "audio/MainMenuPress.mp3"
         hover_sound "audio/MainMenuRollover.mp3"
-        hovered Function(sr.speak, u"New Game", True)
-        action Start()
+        hovered [Function(sr.nav_set, 0), Function(sr.speak, u"New Game", False)]
+        action Function(sr.nav_activate)
 
     imagebutton:
         idle "CONTINUE.png"
@@ -341,8 +567,8 @@ screen navigation():
         focus_mask "CONTINUE_mask.png"
         activate_sound "audio/MainMenuPress.mp3"
         hover_sound "audio/MainMenuRollover.mp3"
-        hovered Function(sr.speak, u"Continue", True)
-        action ShowMenu("load")
+        hovered [Function(sr.nav_set, 1), Function(sr.speak, u"Continue and Load Game", False)]
+        action Function(sr.nav_activate)
 
     imagebutton:
         idle "OPTIONS.png"
@@ -352,8 +578,8 @@ screen navigation():
         focus_mask "OPTIONS_mask.png"
         activate_sound "audio/MainMenuPress.mp3"
         hover_sound "audio/MainMenuRollover.mp3"
-        hovered Function(sr.speak, u"Options", True)
-        action ShowMenu("preferences")
+        hovered [Function(sr.nav_set, 2), Function(sr.speak, u"Options", False)]
+        action Function(sr.nav_activate)
 
     imagebutton:
         idle "ABOUT.png"
@@ -363,8 +589,8 @@ screen navigation():
         focus_mask "ABOUT_mask.png"
         activate_sound "audio/MainMenuPress.mp3"
         hover_sound "audio/MainMenuRollover.mp3"
-        hovered Function(sr.speak, u"About", True)
-        action ShowMenu("about")
+        hovered [Function(sr.nav_set, 3), Function(sr.speak, u"About", False)]
+        action Function(sr.nav_activate)
 
     imagebutton:
         idle "EXIT.png"
@@ -374,14 +600,8 @@ screen navigation():
         focus_mask "EXIT_mask.png"
         activate_sound "audio/MainMenuPress.mp3"
         hover_sound "audio/MainMenuRollover.mp3"
-        hovered Function(sr.speak, u"Exit", True)
-        action Quit(confirm=not main_menu)
-
-    key "1" action Start()
-    key "2" action ShowMenu("load")
-    key "3" action ShowMenu("preferences")
-    key "4" action ShowMenu("about")
-    key "5" action Quit(confirm=not main_menu)
+        hovered [Function(sr.nav_set, 4), Function(sr.speak, u"Exit Game", False)]
+        action Function(sr.nav_activate)
 
 # -------------------------------------------------------------
 # 4. IN-GAME QUICK MENU
@@ -412,10 +632,7 @@ screen quick_menu():
 screen game_pause_menu():
     tag menu
     modal True
-    key_events True
     add "gui/nvl.png"
-
-    on "show" action [Function(sr.begin_pause), Function(sr.speak, u"Pause Menu. 1: Resume. 2: Save Game. 3: Load Game. 4: Options. 5: Main Menu. 6: Quit Game.", False)]
 
     frame:
         xalign 0.5
@@ -507,8 +724,6 @@ screen load():
 screen pause_file_slots(title):
     default page_name_value = FilePageNameInputValue(pattern=_("Page {}"), auto=_("Auto saves"), quick=_("Quick saves"))
 
-    on "show" action Function(sr.speak, u"%s Menu. Select a slot, or press Escape to return." % title, False)
-
     add "gui/nvl.png"
 
     fixed:
@@ -596,8 +811,6 @@ screen pause_file_slots(title):
 screen preferences():
     tag menu
     add "gui/nvl.png"
-
-    on "show" action Function(sr.speak, u"Options Menu. Display Mode and Volume Controls. Press Escape to return.", False)
 
     frame:
         xalign 0.5
@@ -736,8 +949,6 @@ screen about():
             text about_text:
                 size 24
                 color "#FFFFFF"
-    on "show" action Function(sr.speak, about_text, False)
-
 screen actors():
     tag menu
     $ actors_text = u"Voice Acting Cast: Nicole played by Kayli Mills. Jecka played by Elsie Lovelock. Emily played by Kira Buckland. Kelly played by Megan Shipman. Jeffrey played by Joshua Waters. Coach Colby played by Frank Todaro. Kylar played by Martin Billany. Principal Lynn played by Karen Strassman."
@@ -746,8 +957,6 @@ screen actors():
             text actors_text:
                 size 22
                 color "#FFFFFF"
-    on "show" action Function(sr.speak, actors_text, False)
-
 screen artists():
     tag menu
     $ artists_text = u"Art and Design: Character sprites, CG backgrounds, and user interface designed by SBN3 and contributing artists."
@@ -756,8 +965,6 @@ screen artists():
             text artists_text:
                 size 24
                 color "#FFFFFF"
-    on "show" action Function(sr.speak, artists_text, False)
-
 # -------------------------------------------------------------
 # 9. CONFIRMATION SCREEN
 # -------------------------------------------------------------
@@ -766,7 +973,7 @@ screen confirm(message, yes_action, no_action):
     zorder 200
     style_prefix "confirm"
 
-    on "show" action Function(sr.speak, u"%s. Press Left Arrow for Yes, Right Arrow for No." % sr.clean_text(message), True)
+    on "show" action Function(sr.speak, u"%s. Press Left Arrow for Yes, Right Arrow for No, or Escape to cancel." % sr.clean_text(message), True, True)
 
     add "gui/overlay/confirm.png"
 
@@ -791,6 +998,13 @@ screen confirm(message, yes_action, no_action):
                     action no_action
                     hovered Function(sr.speak, u"No", True)
 
+    # The announcement promises arrow keys work; make them real so a
+    # keyboard user can answer the prompt. Return is intentionally inert so
+    # an accidental Enter can never confirm a destructive action.
+    key "K_LEFT" action [Function(sr.speak, u"Yes", True, True), yes_action]
+    key "K_RIGHT" action [Function(sr.speak, u"No", True, True), no_action]
+    key "K_RETURN" action no_action
+    key "K_SPACE" action no_action
     key "game_menu" action no_action
 
 # -------------------------------------------------------------

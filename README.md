@@ -52,14 +52,15 @@ This mod bridges every single visual gap directly to your screen reader:
 
 ### 3. Accessible Main Menu & Navigation
 * The game's original main menu uses graphical image buttons with no text tags. This mod replaces them with fully accessible controls.
-* Upon launching, the menu announces all options.
-* Arrow keys navigate between:
+* **The moment the game opens, the whole menu is announced aloud** ("Main Menu. 1: New Game. 2: Continue and Load Game…") — nothing is silently focused at launch, so the mod speaks instead of waiting for a keypress.
+* Arrow keys speak each option as you move between them:
   * **New Game**
   * **Continue (Load Game)**
   * **Options (Preferences)**
   * **About**
   * **Exit Game**
-* **Quick Number Shortcuts:** Press `1` for New Game, `2` for Continue, `3` for Options, `4` for About, `5` for Exit.
+* **Enter / Space** activates the option you are on; **Quick Number Shortcuts:** Press `1` for New Game, `2` for Continue, `3` for Options, `4` for About, `5` for Exit.
+* Mouse users still hear each button on hover and select with a click.
 
 ### 4. Spoken Save & Load Slots
 * When opening the Save or Load menu (`Escape`), every slot is announced with its real save time and date:  
@@ -84,7 +85,14 @@ This mod bridges every single visual gap directly to your screen reader:
 | **D** | Toggle screen reader dialogue reading (voices only vs voice + TTS) |
 | **1 to 5** | Quick shortcuts on the Main Menu |
 | **Escape** | Open / Close Pause Menu |
-| **Shift + V** | Toggle Ren'Py self-voicing TTS fallback |
+
+> **Note:** Ren'Py's built-in self-voicing (the `V` / `Shift+V` keys) is
+> permanently disabled while this mod is active. Running Ren'Py's SAPI
+> voice at the same time as NVDA produces two voices speaking at once
+> and makes the game read everything at high speed, so the mod keeps
+> Ren'Py's TTS switched off and routes all speech through a single
+> driver. All dialogue, menus, choices, and save slots are already
+> spoken by this mod, so nothing is lost.
 
 ---
 
