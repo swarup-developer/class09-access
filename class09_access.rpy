@@ -26,6 +26,7 @@ init -999 python:
             self.current_choices = []
             self.current_say_id = 0
             self.spoken_say_id = -1
+            self.pause_depth = 0
             self.init_speech()
 
         def init_speech(self):
@@ -136,13 +137,38 @@ init -999 python:
                     self.sapi = None
                     self.active_driver = None
 
+        def begin_pause(self):
+            self.pause_depth = 1
+            self.stop_speech()
+
+        def resume_from_pause(self):
+            if self.pause_depth:
+                self.pause_depth = 0
+            if not self.pause_depth and self.read_dialogue:
+                self.repeat_last_dialogue()
+
+        def stop_speech(self):
+            self.last_spoken_text = u""
+            try:
+                if self.active_driver == "NVDA" and self.nvda:
+                    self.nvda.nvdaController_cancelSpeech()
+                elif self.active_driver == "TOLK" and self.tolk:
+                    self.tolk.Tolk_Silence()
+                elif self.active_driver == "SAPI" and self.sapi:
+                    self.sapi.Speak(u"", 3)
+            except Exception:
+                pass
+
         def on_say_advance(self):
-            self.current_say_id += 1
+            if not self.pause_depth:
+                self.current_say_id += 1
 
         def on_dialogue(self, who, what):
             if renpy.predicting():
                 return
             if not self.read_dialogue:
+                return
+            if self.pause_depth:
                 return
 
             clean_who = self.clean_text(who) if who else u""
@@ -154,6 +180,7 @@ init -999 python:
             self.spoken_say_id = self.current_say_id
             self.last_who = clean_who
             self.last_what = clean_what
+            self.current_choices = []
 
             if clean_who:
                 msg = u"%s: %s" % (clean_who, clean_what)
@@ -165,6 +192,8 @@ init -999 python:
 
         def on_choices_shown(self, items):
             if renpy.predicting():
+                return
+            if self.pause_depth:
                 return
             self.current_choices = [self.clean_text(item.caption) for item in items]
             options_text = u", ".join([u"Choice %d: %s" % (i + 1, c) for i, c in enumerate(self.current_choices)])
@@ -232,6 +261,7 @@ init 100 python:
     _base_say = renpy.exports.say
 
     def _accessible_say_hook(who, what, *args, **kwargs):
+        sr.on_say_advance()
         sr.on_dialogue(who, what)
         return _base_say(who, what, *args, **kwargs)
 
@@ -247,11 +277,6 @@ init 100 python:
     except Exception:
         pass
 
-    def _accessible_char_callback(event, interact=True, **kwargs):
-        if event == "begin":
-            sr.on_say_advance()
-
-    config.all_character_callbacks.append(_accessible_char_callback)
 
 # -------------------------------------------------------------
 # 1. DIALOGUE SCREEN (say)
@@ -386,9 +411,11 @@ screen quick_menu():
 # -------------------------------------------------------------
 screen game_pause_menu():
     tag menu
+    modal True
+    key_events True
     add "gui/nvl.png"
 
-    on "show" action Function(sr.speak, u"Pause Menu. 1: Resume. 2: Save Game. 3: Load Game. 4: Options. 5: Main Menu. 6: Quit Game.", False)
+    on "show" action [Function(sr.begin_pause), Function(sr.speak, u"Pause Menu. 1: Resume. 2: Save Game. 3: Load Game. 4: Options. 5: Main Menu. 6: Quit Game.", False)]
 
     frame:
         xalign 0.5
@@ -404,7 +431,7 @@ screen game_pause_menu():
                 xalign 0.5
 
             textbutton _("1. Resume"):
-                action Return()
+                action [Function(sr.resume_from_pause), Return()]
                 hovered Function(sr.speak, u"1: Resume Game", True)
                 xalign 0.5
 
@@ -433,8 +460,8 @@ screen game_pause_menu():
                 hovered Function(sr.speak, u"6: Quit Game", True)
                 xalign 0.5
 
-    key "game_menu" action Return()
-    key "1" action Return()
+    key "game_menu" action [Function(sr.resume_from_pause), Return()]
+    key "1" action [Function(sr.resume_from_pause), Return()]
     key "2" action ShowMenu("save")
     key "3" action ShowMenu("load")
     key "4" action ShowMenu("preferences")

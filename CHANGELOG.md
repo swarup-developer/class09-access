@@ -4,6 +4,13 @@ Newest first. Version 1.0.0 is the current initial release.
 
 Class of '09 Access is developed for *Class of '09* and *Class of '09: The Re-Up* on Windows (64-bit and 32-bit), running on Ren'Py 7.5.0 with Python 2.7.
 
+## Unreleased — Accessibility Reliability Fixes
+
+- Fixed the pause menu so it captures keyboard input and prevents dialogue or choice interactions from leaking through while paused.
+- Stopped narration cleanly during pause and re-read the current dialogue when resuming instead of skipping ahead to the next choice.
+- Fixed duplicate dialogue announcements caused by overlapping speech callbacks.
+- Cleared stale choice data when new dialogue begins and made pause state reliable across Save, Load, and Options screens.
+
 ---
 
 ## 1.0.0 — Initial Release: Complete Screen Reader Bridge
