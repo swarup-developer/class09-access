@@ -38,7 +38,7 @@ While the voice acting makes the story great to listen to, blind and visually im
 
 ## 🚀 Installation Instructions
 
-1. Download **`Class09-Access-v1.0.0.zip`** from the Assets below.
+1. Download **`Class09-Access-v1.0.1.zip`** from the Assets below.
 2. Extract the archive into your game's **`game/`** subfolder:
    * **Steam:** `Steam\steamapps\common\Class of '09\game\`
    * **The Re-Up:** `Steam\steamapps\common\Class of '09 - The Re-Up\game\`

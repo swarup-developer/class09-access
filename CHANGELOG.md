@@ -1,10 +1,10 @@
 # Class of '09 Access — Changelog
 
-Newest first. Version 1.0.0 is the current initial release.
+Newest first. Version 1.0.1 is the current release; 1.0.0 was the initial release.
 
 Class of '09 Access is developed for *Class of '09* and *Class of '09: The Re-Up* on Windows (64-bit and 32-bit), running on Ren'Py 7.5.0 with Python 2.7.
 
-## Unreleased — Menu Announcement Fixes
+## 1.0.1 — Menu Announcement & Confirm-Dialog Fixes (Current Release)
 
 - **Fixed the silent Pause / Options / Save / Load / About menus.** Ren'Py only runs a screen's `on "show"` action when the screen is shown through `call screen` or a non-transient `show_screen`; every menu the engine opens through its standard game-menu path (ESC pause menu, Options, Save, Load, About) is shown *transiently*, so those announcements never fired and the menus opened in complete silence even though their buttons worked. A screen watchdog now polls once per tick and announces each menu aloud the moment it appears (and again each time it is reopened), so pressing `Escape` during dialogue now speaks "Pause Menu. 1: Resume. 2: Save Game. 3: Load Game. 4: Options. 5: Main Menu. 6: Quit Game…" and the Save/Load slot lists, Options, and About screens introduce themselves. Verified live in-game: pause opened mid-scene announces and captures input (`pause_depth`), choices announce in full when they appear, and dialogue keeps reading in order.
 - **Confirmed choice menus announce end-to-end in the real game** ("Choice 1: …, Choice 2: …" spoken on show, per-option speech on focus/hover) at two separate decision points in a live New Game run.
@@ -12,7 +12,7 @@ Class of '09 Access is developed for *Class of '09* and *Class of '09: The Re-Up
 
 ---
 
-## Unreleased — Dual-Voice & Fast-Reading Fixes
+### Also included in 1.0.1 — Dual-Voice & Fast-Reading Fixes
 
 - **Eliminated the second voice:** Ren'Py's built-in self-voicing (SAPI "wscript") could run alongside NVDA whenever it was toggled on with `V`/`Shift+V` or restored from a saved preference, producing two voices and making the game read at high speed. It is now hard-disabled at launch and re-disabled on every frame (watchdog), the `V`/`Shift+V`/`C` self-voicing hotkeys are removed, and the saved `self_voicing` preference is forced off whenever a mod driver (NVDA / Tolk / SAPI) is active.
 - **Fixed "reads everything very fast / skips everything after New Game":** Class of '09 writes every line with `{p=X}{nw}`, which makes the game auto-advance dialogue timed to the voice acting. Each auto-advanced line used to cancel NVDA's current reading mid-sentence, so the reader was constantly cut off. Lines that follow an auto-advanceable line are now queued instead of interrupting, so NVDA finishes every line in order; lines the player advances with a click still read instantly. Dialogue is also no longer spoken while the game is skipping (Tab / Ctrl+Tab), and rapid-fire `interact=False` narration lines are queued instead of cancelling each other.

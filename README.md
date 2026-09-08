@@ -11,6 +11,8 @@
 ### Complete Screen Reader Accessibility Mod for *Class of '09* and *Class of '09: The Re-Up*
 *Spoken branching choices, live dialogue announcements, full keyboard navigation, accessible save/load slots, and zero visual barriers.*
 
+> 📦 **Current release: [v1.0.1](https://github.com/swarup-developer/class09-access/releases/latest)** — spoken Pause / Options / Save-Load / About menus, keyboard-friendly confirm dialogs, and no more fast or skipped dialogue.
+
 ---
 
 </div>
@@ -103,7 +105,7 @@ This mod bridges every single visual gap directly to your screen reader:
    * **Steam Default:** `C:\Program Files (x86)\Steam\steamapps\common\Class of '09\`
    * **Custom / DRM-Free:** Wherever `Class_Of_09.exe` is located (e.g. `D:\game\Class of 09\`).
 2. Open the **`game\`** subfolder inside the game directory.
-3. Copy the following files from this repository into that **`game\`** folder:
+3. Download the latest **`Class09-Access-v1.0.1.zip`** from the [releases page](https://github.com/swarup-developer/class09-access/releases), extract it, and copy the following files into that **`game\`** folder:
    * `class09_access.rpy` (you can also name it `zz_class09_access.rpy`)
    * `nvdaControllerClient64.dll` & `nvdaControllerClient32.dll` (from the `lib/` folder)
    * `Tolk64.dll` & `Tolk32.dll` (from the `lib/` folder)
